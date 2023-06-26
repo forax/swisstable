@@ -23,6 +23,23 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     }
   }
 
+  private static final sun.misc.Unsafe UNSAFE;
+  private static final long BYTE_ARRAY_OFFSET, BYTE_ARRAY_INDEX_SCALE;
+  private static final long OBJECT_ARRAY_OFFSET, OBJECT_ARRAY_INDEX_SCALE;
+  static {
+    try {
+      var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+      field.setAccessible(true);
+      UNSAFE = (sun.misc.Unsafe) field.get(null);
+    } catch (IllegalAccessException | NoSuchFieldException e) {
+      throw new AssertionError(e);
+    }
+    BYTE_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
+    BYTE_ARRAY_INDEX_SCALE = UNSAFE.arrayIndexScale(byte[].class);
+    OBJECT_ARRAY_OFFSET = UNSAFE.arrayBaseOffset(Object[].class);
+    OBJECT_ARRAY_INDEX_SCALE = UNSAFE.arrayIndexScale(Object[].class);
+  }
+
   private static final byte EMPTY = (byte) 0b1000_0000;
   private static final byte DELETED = (byte) 0b1111_1110;
   private static final byte NOT_FULL_MASK = (byte) 0b1000_0000;
@@ -34,18 +51,18 @@ public class SwissTableSet<E> extends AbstractSet<E> {
 
   private byte[] controls;
   private E[] slots;
-  private int capacityMinusOne;
   private int size;
   private int modCount;
+  private int capacityLeft;
 
   @SuppressWarnings("unchecked")
   public SwissTableSet() {
-    var metadata = new byte[SPECIES.length() * INITIAL_CAPACITY];
-    Arrays.fill(metadata, EMPTY);
-    var controls = (E[]) new Object[SPECIES.length() * INITIAL_CAPACITY];
-    this.capacityMinusOne = INITIAL_CAPACITY - 1;
-    this.controls = metadata;
-    this.slots = controls;
+    var controls = new byte[LENGTH * INITIAL_CAPACITY];
+    Arrays.fill(controls, EMPTY);
+    var slots = (E[]) new Object[LENGTH * INITIAL_CAPACITY];
+    this.controls = controls;
+    this.slots = slots;
+    this.capacityLeft = controls.length >>> 1;
   }
 
   public int size() {
@@ -56,20 +73,26 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     var hash = element.hashCode();
     var h1 = hash >>> SEVEN;
     var h2 = (byte) (hash & SEVEN_BITS_MASK);
-    for(var group = (h1 & capacityMinusOne) * LENGTH;; group = ((group + 1) & capacityMinusOne) * LENGTH) {
+    for(var group = (h1 * LENGTH) & (controls.length - 1);; group = (group + LENGTH) & (controls.length - 1)) {
       var v = ByteVector.fromArray(SPECIES, controls, group);
       var mask = (int) v.eq(h2).toLong();
       for (; mask != 0; mask = mask & (mask - 1)) {
         var trailingZeroes = Integer.numberOfTrailingZeros(mask);
-        if (element.equals(slots[group + trailingZeroes])) {
+        //if (element.equals(slots[group + trailingZeroes])) {
+        if (element.equals(UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes)))) {
           return false;
         }
       }
       var first = v.eq(EMPTY).firstTrue();
       if (first != LENGTH) {
-        // TODO rehash
-        controls[group + first] = h2;
-        slots[group + first] = element;
+        if (capacityLeft == 0) {
+          return rehash(element);
+        }
+        //controls[group + first] = h2;
+        UNSAFE.putByte(controls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (group + first), h2);
+        //slots[group + first] = element;
+        UNSAFE.putObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + first), element);
+        capacityLeft--;
         size++;
         modCount++;
         return true;
@@ -81,12 +104,14 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     var hash = o.hashCode();
     var h1 = hash >>> SEVEN;
     var h2 = (byte) (hash & SEVEN_BITS_MASK);
-    for(var group = (h1 & capacityMinusOne) * LENGTH;; group = ((group + 1) & capacityMinusOne) * LENGTH) {
+
+    for(var group = (h1 * LENGTH) & (controls.length - 1);; group = (group + LENGTH) & (controls.length - 1)) {
       var v = ByteVector.fromArray(SPECIES, controls, group);
       var mask = (int) v.eq(h2).toLong();
       for (; mask != 0; mask = mask & (mask - 1)) {
         var trailingZeroes = Integer.numberOfTrailingZeros(mask);
-        if (o.equals(slots[group + trailingZeroes])) {
+        //if (o.equals(slots[group + trailingZeroes])) {
+        if (o.equals(UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes)))) {
           return true;
         }
       }
@@ -101,15 +126,18 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     var hash = o.hashCode();
     var h1 = hash >>> SEVEN;
     var h2 = (byte) (hash & SEVEN_BITS_MASK);
-    for(var group = (h1 & capacityMinusOne) * LENGTH;; group = ((group + 1) & capacityMinusOne) * LENGTH) {
+    for(var group = (h1 * LENGTH) & (controls.length - 1);; group = (group + LENGTH) & (controls.length - 1)) {
       var v = ByteVector.fromArray(SPECIES, controls, group);
       var mask = (int) v.eq(h2).toLong();
       for (; mask != 0; mask = mask & (mask - 1)) {
         var trailingZeroes = Integer.numberOfTrailingZeros(mask);
         if (o.equals(slots[group + trailingZeroes])) {
           var anyTrue = v.eq(EMPTY).anyTrue();
-          controls[group + trailingZeroes] = anyTrue? EMPTY: DELETED;
-          slots[group + trailingZeroes] = null;
+          //controls[group + trailingZeroes] = anyTrue? EMPTY: DELETED;
+          UNSAFE.putByte(controls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (group + trailingZeroes), anyTrue? EMPTY: DELETED);
+          //slots[group + trailingZeroes] = null;
+          UNSAFE.putObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes), null);
+          capacityLeft += anyTrue? 1: 0;
           size--;
           modCount++;
           return true;
@@ -122,6 +150,69 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     }
   }
 
+  @SuppressWarnings("unchecked")
+  private boolean rehash(E newElement) {
+    var newLength = controls.length << 1;
+    var newControls = new byte[newLength];
+    Arrays.fill(newControls, EMPTY);
+    var newSlots = (E[]) new Object[newLength];
+
+    //System.out.println("newLength " + newLength +  " newCapacityMinusOne " + newCapacityMinusOne);
+
+    for(var group = 0; group < controls.length; group += LENGTH) {
+      var v = ByteVector.fromArray(SPECIES, controls, group);
+      var controlMask = (int) v.and(NOT_FULL_MASK).eq((byte) 0).toLong();
+      loop: for (; controlMask != 0; controlMask = controlMask & (controlMask - 1)) {
+        var trailingZeroes = Integer.numberOfTrailingZeros(controlMask);
+        //var element = slots[group + trailingZeroes];
+        var element = (E) UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes));
+
+        //System.out.println("rehash " + element);
+
+        var hash = element.hashCode();
+        var h1 = hash >>> SEVEN;
+        var h2 = (byte) (hash & SEVEN_BITS_MASK);
+
+        //System.out.println("h1 " + h1 + " h2 " + h2);
+
+        for(var g = (h1 * LENGTH) & (newLength - 1);; g = (g + LENGTH) & (newLength - 1)) {
+          //System.out.println("from array " + newControls.length + " " + g);
+
+          var newV = ByteVector.fromArray(SPECIES, newControls, g);
+          var index = newV.eq(EMPTY).firstTrue();
+          if (index != LENGTH) {
+            //newControls[g + index] = h2;
+            UNSAFE.putByte(newControls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (g + index), h2);
+            //newSlots[g + index] = element;
+            UNSAFE.putObject(newSlots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (g + index), element);
+            continue loop;
+          }
+        }
+      }
+    }
+
+    var hash = newElement.hashCode();
+    var h1 = hash >>> SEVEN;
+    var h2 = (byte) (hash & SEVEN_BITS_MASK);
+    for(var g = (h1 * LENGTH) & (newLength - 1);; g = (g + LENGTH) & (newLength - 1)) {
+      var newV = ByteVector.fromArray(SPECIES, newControls, g);
+      var index = newV.eq(EMPTY).firstTrue();
+      if (index != LENGTH) {
+        //newControls[g + index] = h2;
+        UNSAFE.putByte(newControls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (g + index), h2);
+        //newSlots[g + index] = newElement;
+        UNSAFE.putObject(newSlots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (g + index), newElement);
+        modCount++;
+        size++;
+
+        capacityLeft = controls.length >>> 1 - size;
+        controls = newControls;
+        slots = newSlots;
+        return true;
+      }
+    }
+  }
+
   @Override
   public String toString() {
     var joiner = new StringJoiner(", ", "[", "]");
@@ -130,7 +221,8 @@ public class SwissTableSet<E> extends AbstractSet<E> {
       var controlMask = (int) v.and(NOT_FULL_MASK).eq((byte) 0).toLong();
       for (; controlMask != 0; controlMask = controlMask & (controlMask - 1)) {
         var trailingZeroes = Integer.numberOfTrailingZeros(controlMask);
-        joiner.add(slots[group + trailingZeroes].toString());
+        //joiner.add(slots[group + trailingZeroes].toString());
+        joiner.add(UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes)).toString());
       }
     }
     return joiner.toString();
@@ -139,7 +231,7 @@ public class SwissTableSet<E> extends AbstractSet<E> {
   @Override
   public Iterator<E> iterator() {
     var modCount = this.modCount;
-    return new Iterator<E>() {
+    return new Iterator<>() {
       private int group;
       private int controlMask = findNextControlMask(0);
 
@@ -172,7 +264,9 @@ public class SwissTableSet<E> extends AbstractSet<E> {
           throw new NoSuchElementException();
         }
         var trailingZeroes = Integer.numberOfTrailingZeros(controlMask);
-        var element = slots[group + trailingZeroes];
+        //var element = slots[group + trailingZeroes];
+        @SuppressWarnings("unchecked")
+        var element = (E) UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes));
         controlMask = controlMask & (controlMask - 1);
         if (controlMask == 0) {
           controlMask = findNextControlMask(group + LENGTH);
