@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class SwissTableSetTest {
   @Test
   public void add() {
-    var count = 20;
+    var count = 100;
     var set = new SwissTableSet<Integer>();
     IntStream.range(0, count)
         .forEach(i -> assertTrue(set.add(i)));
@@ -24,7 +24,7 @@ public class SwissTableSetTest {
 
   @Test
   public void addSame() {
-    var count = 20;
+    var count = 100;
     var set = new SwissTableSet<Integer>();
     IntStream.range(0, count).forEach(set::add);
     IntStream.range(0, count).forEach(i -> assertFalse(set.add(i)));
@@ -54,7 +54,7 @@ public class SwissTableSetTest {
       }
     }
 
-    var count = 20;
+    var count = 100;
     var set = new SwissTableSet<BadHashInteger>();
     IntStream.range(0, count).forEach(i -> set.add(new BadHashInteger(i)));
     assertAll(
@@ -83,7 +83,7 @@ public class SwissTableSetTest {
 
   @Test
   public void addAndRemove() {
-    var count = 20;
+    var count = 100;
     var set = new SwissTableSet<Integer>();
     IntStream.range(0, count)
         .forEach(i -> assertTrue(set.add(i)));
@@ -113,7 +113,7 @@ public class SwissTableSetTest {
 
   @Test
   public void iterator() {
-    var count = 20;
+    var count = 100;
     var set = new SwissTableSet<Integer>();
     IntStream.range(0, count)
         .forEach(i -> assertTrue(set.add(i)));
