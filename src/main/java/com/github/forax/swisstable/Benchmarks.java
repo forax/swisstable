@@ -13,6 +13,7 @@ import org.openjdk.jmh.annotations.Warmup;
 import java.util.HashSet;
 import java.util.concurrent.TimeUnit;
 
+// $JAVA_HOME/bin/java -jar target/benchmarks.jar -prof dtraceasm
 @Warmup(iterations = 5, time = 2, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 2, timeUnit = TimeUnit.SECONDS)
 @Fork(value = 1, jvmArgs = { "--add-modules", "jdk.incubator.vector" })
