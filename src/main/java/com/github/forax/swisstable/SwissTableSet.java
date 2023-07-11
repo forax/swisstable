@@ -162,53 +162,42 @@ public class SwissTableSet<E> extends AbstractSet<E> {
     for(var group = 0; group < controls.length; group += LENGTH) {
       var v = ByteVector.fromArray(SPECIES, controls, group);
       var controlMask = (int) v.and(NOT_FULL_MASK).eq((byte) 0).toLong();
-      loop: for (; controlMask != 0; controlMask = controlMask & (controlMask - 1)) {
+      for (; controlMask != 0; controlMask = controlMask & (controlMask - 1)) {
         var trailingZeroes = Integer.numberOfTrailingZeros(controlMask);
         //var element = slots[group + trailingZeroes];
         var element = (E) UNSAFE.getObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (group + trailingZeroes));
-
-        //System.out.println("rehash " + element);
-
-        var hash = element.hashCode();
-        var h1 = hash >>> SEVEN;
-        var h2 = (byte) (hash & SEVEN_BITS_MASK);
-
-        //System.out.println("h1 " + h1 + " h2 " + h2);
-
-        for(var g = (h1 * LENGTH) & (newLength - 1);; g = (g + LENGTH) & (newLength - 1)) {
-          //System.out.println("from array " + newControls.length + " " + g);
-
-          var newV = ByteVector.fromArray(SPECIES, newControls, g);
-          var index = newV.eq(EMPTY).firstTrue();
-          if (index != LENGTH) {
-            //newControls[g + index] = h2;
-            UNSAFE.putByte(newControls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (g + index), h2);
-            //newSlots[g + index] = element;
-            UNSAFE.putObject(newSlots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (g + index), element);
-            continue loop;
-          }
-        }
+        insert(newLength, newControls, newSlots, element);
       }
     }
 
-    var hash = newElement.hashCode();
+    insert(newLength, newControls, newSlots, newElement);
+    modCount++;
+    size++;
+
+    capacityLeft = controls.length >>> 1 - size;
+    controls = newControls;
+    slots = newSlots;
+    return true;
+  }
+
+  private static void insert(int length, byte[] controls, Object[] slots, Object element) {
+    var hash = element.hashCode();
     var h1 = hash >>> SEVEN;
     var h2 = (byte) (hash & SEVEN_BITS_MASK);
-    for(var g = (h1 * LENGTH) & (newLength - 1);; g = (g + LENGTH) & (newLength - 1)) {
-      var newV = ByteVector.fromArray(SPECIES, newControls, g);
+
+    //System.out.println("h1 " + h1 + " h2 " + h2);
+
+    for(var g = (h1 * LENGTH) & (length - 1);; g = (g + LENGTH) & (length - 1)) {
+      //System.out.println("from array " + controls.length + " " + g);
+
+      var newV = ByteVector.fromArray(SPECIES, controls, g);
       var index = newV.eq(EMPTY).firstTrue();
       if (index != LENGTH) {
-        //newControls[g + index] = h2;
-        UNSAFE.putByte(newControls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (g + index), h2);
-        //newSlots[g + index] = newElement;
-        UNSAFE.putObject(newSlots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (g + index), newElement);
-        modCount++;
-        size++;
-
-        capacityLeft = controls.length >>> 1 - size;
-        controls = newControls;
-        slots = newSlots;
-        return true;
+        //controls[g + index] = h2;
+        UNSAFE.putByte(controls, BYTE_ARRAY_OFFSET + BYTE_ARRAY_INDEX_SCALE * (g + index), h2);
+        //slots[g + index] = element;
+        UNSAFE.putObject(slots, OBJECT_ARRAY_OFFSET + OBJECT_ARRAY_INDEX_SCALE * (g + index), element);
+        return;
       }
     }
   }
